@@ -1,23 +1,62 @@
-import csv
+import operator
+from collections import namedtuple
 import os
 import string
 from datetime import datetime, timedelta
+from enum import Enum
 
 
-class Entry(object):
-    def __init__(self, date, balance):
-        self.date = date
-        self.balance = balance
+Entry = namedtuple("Entry", ["date", "balance", "account_name"])
 
 
-class SantanderReader(object):
+class AccountStatement(dict):
+    """
+    Thin wrapper over a dict to name dates to balances and store an account
+    name
+    """
+    def __init__(self, name, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.name = name
+
+    def extend_balances(self, end_date):
+        """
+        Extend the balances recorded to include dates up to `end_date`
+        """
+        last_date = max(self.keys())
+        last_balance = self[last_date]
+        d = last_date + timedelta(days=1)
+        while d <= end_date:
+            self[d] = last_balance
+            d += timedelta(days=1)
+
+
+class SortOrder(Enum):
+    ascending = "asc"
+    descending = "desc"
+
+
+class StatementReader(object):
+    """
+    Class to read bank statements and return a list of AccountStatement objects
+    for each account found in the statement
+    """
+    order = None  # Override in base class
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        raise NotImplementedError
+
+
+class SantanderReader(StatementReader):
+
+    order = SortOrder.descending
+
     def __init__(self, f):
         for _ in range(3):
             f.readline()
         self.f = f
-
-    def __iter__(self):
-        return self
 
     def __next__(self):
         # Consume blank line or stop iteration
@@ -32,45 +71,103 @@ class SantanderReader(object):
             self.f.readline()
 
         balance_line = self.f.readline().strip()
-        balance_str = "".join(c for c in balance_line if c in string.digits or c in (".", "-"))
-        return Entry(date, float(balance_str))
+        balance_str = "".join(c for c in balance_line
+                              if c in string.digits or c in (".", "-"))
+        return Entry(date, float(balance_str), "Santander account")
 
 
-class NatwestReader(object):
+class NatwestReader(StatementReader):
+
+    # Entries are not strictly ascending in nw statements, but instead grouped
+    # by account and then sorted ascending. Since we group entries by account
+    # later, it is fine to say the ordering is ascending...
+    order = SortOrder.ascending
+
     def __init__(self, f):
-        self.reader = csv.reader(f, delimiter=",")
+        self.file = f
 
-    def __iter__(self):
-        return self
+    def split_outside_quotes(self, s, delim_char):
+        """
+        Split a string `s` by a single-character delimiter `delim_char`, but
+        only when it appears outside double quotes
+        """
+        in_quotes = False
+        parts = []
+        temp = ""
+        for char in s:
+            if char == '"':
+                in_quotes = not in_quotes
+                continue
+
+            if not in_quotes and char == delim_char:
+                parts.append(temp)
+                temp = ""
+            else:
+                temp += char
+        parts.append(temp)
+        return parts
 
     def __next__(self):
         date = None
         balance = None
+        acc_name = None
 
         while True:
-            row = next(self.reader)
-            if not row:
-                continue
-            try:
-                date = datetime.strptime(row[0], "%d/%m/%Y")
-            except:
+            line = self.file.readline()
+            if not line:
+                raise StopIteration
+
+            line = line.strip()
+            if not line:  # Skip blank lines
                 continue
 
-            balance = float(row[4])
+            row = self.split_outside_quotes(line.strip(), ",")
+            for i, _ in enumerate(row):
+                if row[i].startswith("'"):
+                    row[i] = row[i][1:]
+
+            date_str = row[0]
+            balance_str = row[4]
+            acc_name = row[5]
+
+            try:
+                date = datetime.strptime(date_str, "%d/%m/%Y")
+            except ValueError:
+                continue
+
+            balance = float(balance_str)
             break
 
-        return Entry(date, balance)
+        return Entry(date, balance, acc_name)
 
 
-def parse(filename, reader_cls, open_kwargs):
-    with open(filename, newline="", **open_kwargs) as f:
-        reader = reader_cls(f)
+def get_statements(reader):
+    """
+    Return a list of AccountStatement objects for entries retrieved from the
+    given reader.
 
-        # Get valid entries in date ASCENDING order
-        entries = [i for i in reader][::-1]
+    The statement is returned such that every date in the range covered by the
+    entry list is accounted for.
+    """
+    statements = []
+
+    # Build a mapping acc_name to list of entries
+    all_entries = {}
+    for e in reader:
+        if e.account_name not in all_entries:
+            all_entries[e.account_name] = []
+        all_entries[e.account_name].append(e)
+
+    for acc_name, entries in all_entries.items():
+        # Ensure entries are in ASCENDING date order
+        if reader.order == SortOrder.descending:
+            entries = entries[::-1]
+
+        acc_statement = AccountStatement(acc_name)
+
+        # Ensure that every day in range covered by entry list is
+        # recorded in the statement
         prev_entry = entries[0]
-        balances = {}
-
         for entry in entries[1:]:
             prev_date = prev_entry.date
             this_date = entry.date
@@ -78,22 +175,31 @@ def parse(filename, reader_cls, open_kwargs):
             if this_date > prev_date:
                 working_date = prev_date
                 while working_date < this_date:
-                    balances[working_date] = prev_entry.balance
+                    acc_statement[working_date] = prev_entry.balance
                     working_date += timedelta(days=1)
 
             prev_entry = entry
 
-        balances[prev_entry.date] = prev_entry.balance
-        return balances
+        acc_statement[prev_entry.date] = prev_entry.balance
+        statements.append(acc_statement)
+
+    return statements
 
 
-def extend_balances(balances, end_date):
-    last_date = max(balances.keys())
-    last_balance = balances[last_date]
-    d = last_date + timedelta(days=1)
-    while d <= end_date:
-        balances[d] = last_balance
-        d += timedelta(days=1)
+def get_date_range(statements):
+    """
+    Work out earliest date for which a balance is available in ALL accounts,
+    and latest date for which data is available in AT LEAST ONE account.
+
+    Return a tuple (start_date, end_date)
+    """
+    start_dates_list = []
+    end_dates_list = []
+    for acc_st in statements:
+        start_dates_list.append(min(acc_st.keys()))
+        end_dates_list.append(max(acc_st.keys()))
+
+    return max(start_dates_list), max(end_dates_list)
 
 
 if __name__ == "__main__":
@@ -111,42 +217,38 @@ if __name__ == "__main__":
         }
     }
 
-    balances_list = {}
-    for reader, config in reader_config.items():
+    statements = []
+    for reader_cls, config in reader_config.items():
         d = config["dir"]
         ext = ".{}".format(config["extension"])
         filelist = (os.path.join(d, f) for f in os.listdir(d) if f.endswith(ext))
         open_kwargs = config.get("open_kwargs", {})
         for filename in filelist:
-            balances_list[filename] = parse(filename, reader, open_kwargs)
+            with open(filename, newline="", **open_kwargs) as f:
+                reader = reader_cls(f)
+                statements += get_statements(reader)
 
-    # Work out earliest date for which balance is available in ALL accounts,
-    # and max date for which data is available in AT LEAST ONE account
-    start_dates_list = []
-    end_dates_list = []
-    for balances in balances_list.values():
-        start_dates_list.append(min(balances.keys()))
-        end_dates_list.append(max(balances.keys()))
+    # Ensure all statements go up to the latest available date
+    start_date, end_date = get_date_range(statements)
+    for acc_st in statements:
+        acc_st.extend_balances(end_date)
 
-    start_date = max(start_dates_list)
-    end_date = max(end_dates_list)
+    # Sort alphabetically just for display purposes
+    statements.sort(key=operator.attrgetter("name"))
 
-    for balances in balances_list.values():
-        extend_balances(balances, end_date)
-
-    # Prin header row
+    # Print header row
     row = ["Date"]
-    row += [os.path.basename(f) for f in balances_list.keys()]
+    row += map(operator.attrgetter("name"), statements)
     row.append("Total")
     print(",".join(row))
 
     d = start_date
     while d <= end_date:
-        todays_balances = [balances[d] for balances in balances_list.values()]
+        todays_balances = [acc_st[d] for acc_st in statements]
         total = sum(todays_balances)
 
         row = [d.strftime("%d-%m-%Y")]
-        row += [str(i) for i in todays_balances]
+        row += map(str, todays_balances)
         row.append(str(total))
         print(",".join(row))
 
