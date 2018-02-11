@@ -12,8 +12,8 @@ Entry = namedtuple("Entry", ["date", "amount", "description", "balance",
 
 class AccountStatement(dict):
     """
-    Thin wrapper over a dict to name dates to balances and store an account
-    name
+    Thin wrapper over a dict to name dates to balance/entry list and store an
+    account name
     """
     def __init__(self, name, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -24,10 +24,10 @@ class AccountStatement(dict):
         Extend the balances recorded to include dates up to `end_date`
         """
         last_date = max(self.keys())
-        last_balance = self[last_date]
+        last_balance = self[last_date]["balance"]
         d = last_date + timedelta(days=1)
         while d <= end_date:
-            self[d] = last_balance
+            self[d] = {"balance": last_balance, "entries": []}
             d += timedelta(days=1)
 
 
@@ -158,41 +158,48 @@ def get_statements(reader):
     The statement is returned such that every date in the range covered by the
     entry list is accounted for.
     """
-    statements = []
+    statements = {}  # Map acc. name to AccountStatement
 
-    # Build a mapping acc_name to list of entries
-    all_entries = {}
-    for e in reader:
-        if e.account_name not in all_entries:
-            all_entries[e.account_name] = []
-        all_entries[e.account_name].append(e)
+    # Ensure entries are in ASCENDING date order
+    entries = list(reader)
+    if reader.order == SortOrder.descending:
+        entries = entries[::-1]
 
-    for acc_name, entries in all_entries.items():
-        # Ensure entries are in ASCENDING date order
-        if reader.order == SortOrder.descending:
-            entries = entries[::-1]
+    start_dates = {}
+    end_dates = {}
 
-        acc_statement = AccountStatement(acc_name)
+    for e in entries:
+        try:
+            acc_st = statements[e.account_name]
+        except KeyError:
+            acc_st = AccountStatement(e.account_name)
+            statements[e.account_name] = acc_st
+            start_dates[e.account_name] = e.date
 
-        # Ensure that every day in range covered by entry list is
-        # recorded in the statement
-        prev_entry = entries[0]
-        for entry in entries[1:]:
-            prev_date = prev_entry.date
-            this_date = entry.date
+        if e.date not in acc_st:
+            acc_st[e.date] = {"balance": None, "entries": []}
 
-            if this_date > prev_date:
-                working_date = prev_date
-                while working_date < this_date:
-                    acc_statement[working_date] = prev_entry.balance
-                    working_date += timedelta(days=1)
+        # Overwrite balance to ensure that balance is that of the LAST entry
+        # on a given day
+        acc_st[e.date]["balance"] = e.balance
+        acc_st[e.date]["entries"].append(e)
 
-            prev_entry = entry
+        # Override end date - since entries are sorted date ascending we will
+        # always get the max in this way
+        end_dates[e.account_name] = e.date
 
-        acc_statement[prev_entry.date] = prev_entry.balance
-        statements.append(acc_statement)
+    # Fill in missing days
+    for acc_name, acc_st in statements.items():
+        d = start_dates[acc_name]
+        prev_balance = None
+        while d <= end_dates[acc_name]:
+            if d in acc_st:
+                prev_balance = acc_st[d]["balance"]
+            else:
+                acc_st[d] = {"balance": prev_balance, "entries": []}
+            d += timedelta(days=1)
 
-    return statements
+    return list(statements.values())
 
 
 def get_date_range(statements):
@@ -253,7 +260,7 @@ if __name__ == "__main__":
 
     d = start_date
     while d <= end_date:
-        todays_balances = [acc_st[d] for acc_st in statements]
+        todays_balances = [acc_st[d]["balance"] for acc_st in statements]
         total = sum(todays_balances)
 
         row = [d.strftime("%d-%m-%Y")]

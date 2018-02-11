@@ -83,20 +83,35 @@ class TestReaders(object):
 
     def test_get_statements(self):
 
+        # Create a test reader class - needs to be iterable and have `order`
+        # property
         class FakeReader(list):
             order = SortOrder.descending
 
-        fake_reader = FakeReader([
-            Entry(d6, 1, "d", 60, "acc 2"),
-            Entry(d4, 2, "d", 50, "acc 1"),
-            Entry(d2, 3, "d", 3, "acc 2"),
-            Entry(d1, 4, "d", 120, "acc 1"),
-            Entry(d1, 5, "d", 100, "acc 1")
-        ])
+        e1 = Entry(d6, 1, "d", 60, "acc 2")
+        e2 = Entry(d4, 2, "d", 50, "acc 1")
+        e3 = Entry(d2, 3, "d", 3, "acc 2")
+        # Create two entries for d1 - since order is DESCENDING the balance
+        # should be that of the FIRST one (e4)
+        e4 = Entry(d1, 4, "d", 120, "acc 1")
+        e5 = Entry(d1, 5, "d", 100, "acc 1")
+        fake_reader = FakeReader([e1, e2, e3, e4, e5])
 
         expected = [
-            AccountStatement("acc1", {d1: 120, d2: 120, d3: 120, d4: 50}),
-            AccountStatement("acc3", {d2: 3, d3: 3, d4: 3, d5: 3, d6: 60})
+            AccountStatement("acc1", {
+                d1: {"balance": 120, "entries": [e5, e4]},
+                # Missing intermediate days should be present
+                d2: {"balance": 120, "entries": []},
+                d3: {"balance": 120, "entries": []},
+                d4: {"balance": 50, "entries": [e2]},
+            }),
+            AccountStatement("acc2", {
+                d2: {"balance": 3, "entries": [e3]},
+                d3: {"balance": 3, "entries": []},
+                d4: {"balance": 3, "entries": []},
+                d5: {"balance": 3, "entries": []},
+                d6: {"balance": 60, "entries": [e1]},
+            })
         ]
         got = get_statements(fake_reader)
 
@@ -108,16 +123,34 @@ class TestReaders(object):
         assert got == expected
 
     def test_extend_balances(self):
-        acc_st = AccountStatement("my account", {d1: 100, d2: 120})
+        acc_st = AccountStatement("my account", {
+            d1: {"balance": 100, "entries": []},
+            d2: {"balance": 120, "entries": []}
+        })
         acc_st.extend_balances(d5)
         assert acc_st == AccountStatement("my account", {
-            d1: 100, d2: 120, d3: 120, d4: 120, d5: 120
+            d1: {"balance": 100, "entries": []},
+            d2: {"balance": 120, "entries": []},
+            d3: {"balance": 120, "entries": []},
+            d4: {"balance": 120, "entries": []},
+            d5: {"balance": 120, "entries": []}
         })
 
     def test_get_date_range(self):
         statements = [
-            AccountStatement("acc 1", {d1: 1, d2: 2, d3: 3}),
-            AccountStatement("acc 2", {d2: 2, d3: 3}),
-            AccountStatement("acc 3", {d2: 2, d3: 3, d4: 4})
+            AccountStatement("acc 1", {
+                d1: {"balance": 1, "entries": []},
+                d2: {"balance": 2, "entries": []},
+                d3: {"balance": 3, "entries": []},
+            }),
+            AccountStatement("acc 2", {
+                d2: {"balance": 2, "entries": []},
+                d3: {"balance": 3, "entries": []},
+            }),
+            AccountStatement("acc 3", {
+                d2: {"balance": 2, "entries": []},
+                d3: {"balance": 3, "entries": []},
+                d4: {"balance": 3, "entries": []},
+            })
         ]
         assert get_date_range(statements) == (d2, d4)
