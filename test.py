@@ -3,7 +3,8 @@ from datetime import datetime
 import operator
 
 from bank import (NatwestReader, SantanderReader, Entry, get_statements,
-                  AccountStatement, get_date_range, SortOrder)
+                  AccountStatement, get_date_range, SortOrder, aggregate,
+                  is_week_start)
 
 
 d1 = datetime(year=2018, month=2, day=1)
@@ -12,6 +13,13 @@ d3 = datetime(year=2018, month=2, day=3)
 d4 = datetime(year=2018, month=2, day=4)
 d5 = datetime(year=2018, month=2, day=5)
 d6 = datetime(year=2018, month=2, day=6)
+
+
+class FakeReader(list):
+    """
+    Test reader class - just needs to be iterable and have `order` property
+    """
+    order = SortOrder.descending
 
 
 class TestReaders(object):
@@ -82,12 +90,6 @@ class TestReaders(object):
         assert got == expected
 
     def test_get_statements(self):
-
-        # Create a test reader class - needs to be iterable and have `order`
-        # property
-        class FakeReader(list):
-            order = SortOrder.descending
-
         e1 = Entry(d6, 1, "d", 60, "acc 2")
         e2 = Entry(d4, 2, "d", 50, "acc 1")
         e3 = Entry(d2, 3, "d", 3, "acc 2")
@@ -154,3 +156,68 @@ class TestReaders(object):
             })
         ]
         assert get_date_range(statements) == (d2, d4)
+
+    def test_aggregation(self):
+        fri0 = datetime(year=2018, month=1, day=12)
+        tues1 = datetime(year=2018, month=1, day=16)
+        thurs1 = datetime(year=2018, month=1, day=18)
+        sun1 = datetime(year=2018, month=1, day=21)
+        mon2 = datetime(year=2018, month=1, day=22)
+        wed2 = datetime(year=2018, month=1, day=24)
+        wed4 = datetime(year=2018, month=2, day=7)
+
+        e_list = [
+            # Balance and account name are irrelevant here
+            Entry(wed4, -7, "d", 0, "acc2"),
+
+            Entry(wed2, -6, "d", 0, "acc1"),
+            Entry(mon2, -5, "d", 0, "acc1"),
+
+            Entry(sun1, -4, "d", 0, "acc2"),
+            Entry(thurs1, -3, "d", 0, "acc1"),
+            Entry(tues1, 100, "d", 0, "acc1"),  # Incoming money should be ignored
+            Entry(tues1, -2, "d", 0, "acc2"),
+
+            Entry(fri0, -1, "d", 0, "acc3")
+        ]
+
+        expected = [{
+            "start": "08/01/18",
+            "breakdown": {
+                "spending": {
+                    "total": 1,
+                    "transactions": ["£1.00: d"]
+                }
+            }
+        }, {
+            "start": "15/01/18",
+            "breakdown": {
+                "spending": {
+                    "total": 9,
+                    "transactions": ["£2.00: d", "£3.00: d", "£4.00: d"]
+                }
+            }
+        }, {
+            "start": "22/01/18",
+            "breakdown": {
+                "spending": {
+                    "total": 11,
+                    "transactions": ["£5.00: d", "£6.00: d"]
+                }
+            }
+        }, {
+            "start": "29/01/18",
+            "breakdown": {}
+        }, {
+            "start": "05/02/18",
+            "breakdown": {
+                "spending": {
+                    "total": 7,
+                    "transactions": ["£7.00: d"]
+                }
+            }
+        }]
+
+        got = aggregate(get_statements(FakeReader(e_list)), is_week_start,
+                        fri0, wed4)
+        assert got == expected

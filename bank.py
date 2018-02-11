@@ -1,3 +1,4 @@
+import sys
 import operator
 from collections import namedtuple
 import os
@@ -218,7 +219,91 @@ def get_date_range(statements):
     return max(start_dates_list), max(end_dates_list)
 
 
+def is_week_start(dt):
+    return dt.weekday() == 0
+
+
+def aggregate(statements, is_period_start, start_date, end_date):
+    """
+    Look at entries between `start_date` and `end_dates` in the
+    AccountStatements in `statements`.
+
+    Aggregate entries by week/month/etc (is_period_start(day) should be
+    True iff day is the start of the time period) and categorise spending in
+    each period.
+
+    Return a list containing information for each time period of the form
+    {
+        "start": <start date as DD/MM/YY>,
+        "breakdown": {
+            "food": {"total": 20, "transactions": ["£10: Burger", ...]},
+            "drink": {...}
+            ...
+        }
+    }
+    """
+    aggregation = []
+    period = None
+
+    # Backtrack from start date to find start of period
+    day = start_date
+    while not is_period_start(day):
+        day -= timedelta(days=1)
+
+    while day <= end_date:
+        if is_period_start(day):
+            # Save previous period (if there was one) and reset
+            if period is not None:
+                aggregation.append(period)
+            period = {"start": day.strftime("%d/%m/%y"), "breakdown": {}}
+
+        for acc_st in statements:
+            # Day may not be in statement if we had to backtrack to find period
+            # start
+            if day in acc_st:
+                for e in acc_st[day]["entries"]:
+                    cat = "spending"  # TODO: use description to get category
+                    if cat not in period["breakdown"]:
+                        period["breakdown"][cat] = {
+                            "total": 0,
+                            "transactions": []
+                        }
+
+                    # Only care about spending
+                    if e.amount < 0:
+                        period["breakdown"][cat]["total"] -= e.amount
+                        transaction = "£{:.2f}: {}".format(-e.amount, e.description)
+                        period["breakdown"][cat]["transactions"].append(transaction)
+
+        day += timedelta(days=1)
+
+    aggregation.append(period)
+    return aggregation
+
+
+def usage():
+    prog = os.path.basename(sys.argv[0])
+    usage = """Usage: {} [-s]
+
+Read bank statements from subdirectories of 'statements' and produce an
+aggregated statement in CSV format.
+
+Options:
+  -s, --spending    Print a weekly spending report instead of a statement
+""".format(prog)
+    print(usage)
+
+
 if __name__ == "__main__":
+
+    spending_report = False
+    for arg in sys.argv[1:]:
+        if arg in ("-h", "--help"):
+            usage()
+            sys.exit(0)
+        elif arg in ("-s", "--spending"):
+            spending_report = True
+
     statements_dir = "statements"
 
     reader_config = {
@@ -249,23 +334,33 @@ if __name__ == "__main__":
     for acc_st in statements:
         acc_st.extend_balances(end_date)
 
-    # Sort alphabetically just for display purposes
-    statements.sort(key=operator.attrgetter("name"))
+    if spending_report:
+        aggregation = aggregate(statements, is_week_start, start_date, end_date)
+        for period in aggregation:
+            print("Week beginning {}:".format(period["start"]))
+            for cat, breakdown in period["breakdown"].items():
+                print("  {}: £{:.2f}".format(cat, breakdown["total"]))
+                for tr in breakdown["transactions"]:
+                    print("    {}".format(tr))
 
-    # Print header row
-    row = ["Date"]
-    row += map(operator.attrgetter("name"), statements)
-    row.append("Total")
-    print(",".join(row))
+    else:
+        # Sort alphabetically just for display purposes
+        statements.sort(key=operator.attrgetter("name"))
 
-    d = start_date
-    while d <= end_date:
-        todays_balances = [acc_st[d]["balance"] for acc_st in statements]
-        total = sum(todays_balances)
-
-        row = [d.strftime("%d-%m-%Y")]
-        row += map(str, todays_balances)
-        row.append(str(total))
+        # Print header row
+        row = ["Date"]
+        row += map(operator.attrgetter("name"), statements)
+        row.append("Total")
         print(",".join(row))
 
-        d += timedelta(days=1)
+        d = start_date
+        while d <= end_date:
+            todays_balances = [acc_st[d]["balance"] for acc_st in statements]
+            total = sum(todays_balances)
+
+            row = [d.strftime("%d-%m-%Y")]
+            row += map(str, todays_balances)
+            row.append(str(total))
+            print(",".join(row))
+
+            d += timedelta(days=1)
