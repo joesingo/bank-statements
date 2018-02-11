@@ -6,7 +6,8 @@ from datetime import datetime, timedelta
 from enum import Enum
 
 
-Entry = namedtuple("Entry", ["date", "balance", "account_name"])
+Entry = namedtuple("Entry", ["date", "amount", "description", "balance",
+                             "account_name"])
 
 
 class AccountStatement(dict):
@@ -64,16 +65,19 @@ class SantanderReader(StatementReader):
             raise StopIteration
 
         date_line = self.f.readline().strip()
-        date = datetime.strptime(date_line[6:], "%d/%m/%Y")
-
-        # Consume amount and balance
-        for _ in range(2):
-            self.f.readline()
-
+        desc_line = self.f.readline().strip()
+        amount_line = self.f.readline().strip()
         balance_line = self.f.readline().strip()
-        balance_str = "".join(c for c in balance_line
-                              if c in string.digits or c in (".", "-"))
-        return Entry(date, float(balance_str), "Santander account")
+
+        date = datetime.strptime(date_line[6:], "%d/%m/%Y")
+        description = desc_line[13:]
+        return Entry(date, self.get_float(amount_line), description,
+                     self.get_float(balance_line), "Santander account")
+
+    def get_float(self, line):
+        num_str = "".join(c for c in line
+                          if c in string.digits or c in (".", "-"))
+        return float(num_str)
 
 
 class NatwestReader(StatementReader):
@@ -109,6 +113,8 @@ class NatwestReader(StatementReader):
 
     def __next__(self):
         date = None
+        desc = None
+        amount = None
         balance = None
         acc_name = None
 
@@ -127,6 +133,8 @@ class NatwestReader(StatementReader):
                     row[i] = row[i][1:]
 
             date_str = row[0]
+            description = row[2]
+            amount_str = row[3]
             balance_str = row[4]
             acc_name = row[5]
 
@@ -135,10 +143,11 @@ class NatwestReader(StatementReader):
             except ValueError:
                 continue
 
+            amount = float(amount_str)
             balance = float(balance_str)
             break
 
-        return Entry(date, balance, acc_name)
+        return Entry(date, amount, description, balance, acc_name)
 
 
 def get_statements(reader):
