@@ -151,6 +151,46 @@ class NatwestReader(StatementReader):
         return Entry(date, amount, description, balance, acc_name)
 
 
+class CategoryMapping(object):
+    """
+    Class to map entry descriptions to categories
+    """
+
+    UNCATEGORISED = "uncategorised"
+
+    def __init__(self, mappings, ignores):
+        """
+        `mapping` - dict of the form {cat_name: [pattern, ...], ...}.
+                    A description `desc` will belong to category cat_name if
+                    any of the patterns corresponding to cat_name are a
+                    substring of `desc`.
+        `ignores` - list of patterns used to ignore an entry, i.e. indicate
+                    that it should not be treated as a spend.
+        """
+        self.mappings = {cat: list(map(str.lower, mappings[cat])) for cat in mappings}
+        self.ignores = list(map(str.lower, ignores))
+
+    def get_category(self, desc):
+        """
+        Return the category that `desc` belongs to, or UNCATEGORISED if no
+        category could be found, or None if `desc` should be ignored
+        """
+        desc = desc.lower()
+        for pattern in self.ignores:
+            if pattern in desc:
+                return None
+
+        for cat_name, patterns in self.mappings.items():
+            for pattern in patterns:
+                print("Looking at pattern {}, desc {}".format(pattern, desc))
+                if pattern in desc:
+                    return cat_name
+                else:
+                    print("Nout found...")
+
+        return self.UNCATEGORISED
+
+
 def get_statements(reader):
     """
     Return a list of AccountStatement objects for entries retrieved from the

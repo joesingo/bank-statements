@@ -3,8 +3,8 @@ from datetime import datetime
 import operator
 
 from bank import (NatwestReader, SantanderReader, Entry, get_statements,
-                  AccountStatement, get_date_range, SortOrder, aggregate,
-                  is_week_start)
+                  AccountStatement, CategoryMapping, SortOrder, aggregate,
+                  is_week_start, get_date_range)
 
 
 d1 = datetime(year=2018, month=2, day=1)
@@ -166,6 +166,10 @@ class TestReaders(object):
         wed2 = datetime(year=2018, month=1, day=24)
         wed4 = datetime(year=2018, month=2, day=7)
 
+        # Category mappings
+        mappings = {"food": ["mcdonalds", "burger king"], "car": ["pay AT puMP"]}
+        ignores = ["traNSFer to"]
+
         e_list = [
             # Balance and account name are irrelevant here
             Entry(wed4, -7, "d", 0, "acc2"),
@@ -221,3 +225,20 @@ class TestReaders(object):
         got = aggregate(get_statements(FakeReader(e_list)), is_week_start,
                         fri0, wed4)
         assert got == expected
+
+    def test_categorise(self):
+        mappings = {"food": ["mcdonalds", "burger king"], "car": ["pay AT puMP"]}
+        ignores = ["traNSFer to"]
+        cat_mapping = CategoryMapping(mappings, ignores)
+
+        tests = (
+            ("CARD PAYMENT TO MCDONALDS,4.28 GBP, RATE 1.00/GBP ON 08-02-2018",
+             "food"),
+            ("Some description involving burger king", "food"),
+            ("burgerking", CategoryMapping.UNCATEGORISED),
+            ("CARD PAYMENT TO TESCO PAY AT PUMP 3837,30.43 GBP, RATE 1.00/GBP ON 08-02-2018",
+             "car"),
+            ("TRANSFER TO OTHER ACCOUNT", None)
+        )
+        for desc, expected_cat in tests:
+            assert cat_mapping.get_category(desc) == expected_cat
