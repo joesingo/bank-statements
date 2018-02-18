@@ -16,15 +16,17 @@ DD-MM-YYYY,<balance>,<balance>,...,<balance>,<total balance>
 ...
 ```
 
-Statements are looked for at `statements/natwest/*.csv`, `statements/hsbc/*.csv`
-and `statements/santander/*.txt`.
+Statements are looked for at `statements/natwest/*.csv`, `statements/hsbc/*.csv`,
+`statements/hsbc/*.midata` and `statements/santander/*.txt`.
 
 Natwest statements should be downloaded by going to `Statements` ->
 `Download or export transactions`. For `Time period`, choose `Last 4 months`,
 and for `Download/export type` choose `Excel, Lotus 123, Text (CSV file)`.
 
 Santander statements should be downloaded by going to `View transactions` ->
-`Download transactions`. Choose `Text file (TXT)` format in the `Download to`
-dropdown.
+`Download transactions`. Choose MIDATA format in the `Download to` dropdown.
+
+HSBC current account statements should be downloaded in MIDATA format, and
+savings account statements downloaded as CSV.
 
 Tests can by run with `pytest test.py`.

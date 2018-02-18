@@ -51,45 +51,61 @@ class StatementReader(object):
         raise NotImplementedError
 
 
-class SantanderReader(StatementReader):
-
+class MidataReader(StatementReader):
     order = SortOrder.descending
 
-    def __init__(self, f):
-        for _ in range(3):
-            f.readline()
-        self.f = f
+    delimiter = ","
+    account_name = "Undefined"  # To be overriden in child class
+
+    def __init__(self, filename, f):
+        self.file = f
+        next(self.file)  # Skip header row
 
     def __next__(self):
-        # Consume blank line or stop iteration
-        if not self.f.readline():
+        line = self.file.readline().strip()
+        # Blank line means transaction info is finished and overdraft info is
+        # following
+        if not line:
             raise StopIteration
 
-        date_line = self.f.readline().strip()
-        desc_line = self.f.readline().strip()
-        amount_line = self.f.readline().strip()
-        balance_line = self.f.readline().strip()
+        row = line.split(self.delimiter)
+        date_str = row[0]
+        description = row[2]
+        amount_str = row[3]
+        balance_str = row[4]
 
-        date = datetime.strptime(date_line[6:], "%d/%m/%Y")
-        description = desc_line[13:]
-        return Entry(date, self.get_float(amount_line), description,
-                     self.get_float(balance_line), "Santander account")
+        date = datetime.strptime(date_str, "%d/%m/%Y")
+        amount = self.str_to_float(amount_str)
+        balance = self.str_to_float(balance_str)
 
-    def get_float(self, line):
-        num_str = "".join(c for c in line
-                          if c in string.digits or c in (".", "-"))
-        return float(num_str)
+        return Entry(date, amount, description, balance, self.account_name)
+
+    def str_to_float(self, amount_str):
+        allowed = [".", "+", "-"] + list(string.digits)
+        return float("".join(char for char in amount_str if char in allowed))
 
 
-class HSBCReader(StatementReader):
+class SantanderReader(MidataReader):
+    account_name = "Santander account"
+    delimiter = ";"
+
+
+class HsbcMidataReader(MidataReader):
+    account_name = "HSBC current account"
+    delimiter = ","
+
+
+class HsbcCsvReader(StatementReader):
     order = SortOrder.ascending
 
-    def __init__(self, f):
+    def __init__(self, filename, f):
         self.file = f
         # HSBC statements unfortunately do not include balance, so make balance
         # start at 0 on the start of first available day, and total amount as
         # we go
         self.balance = 0
+
+        acc_name = os.path.basename(filename)
 
         # Need to calculate balance from first day but statement file is
         # descending, so consume all lines now and reverse later
@@ -107,7 +123,7 @@ class HSBCReader(StatementReader):
             # Balance needs to be calculated later after list has been
             # reversed
             self.temp_entries.append(Entry(date, amount, description, None,
-                                      "HSBC account"))
+                                      acc_name))
 
     def __next__(self):
         try:
@@ -127,7 +143,7 @@ class NatwestReader(StatementReader):
     # later, it is fine to say the ordering is ascending...
     order = SortOrder.ascending
 
-    def __init__(self, f):
+    def __init__(self, filename, f):
         self.file = f
 
     def split_outside_quotes(self, s, delim_char):
@@ -350,14 +366,19 @@ if __name__ == "__main__":
             "dir": os.path.join(statements_dir, "natwest"),
             "extension": "csv"
         },
-        HSBCReader: {
+        HsbcMidataReader: {
+            "dir": os.path.join(statements_dir, "hsbc"),
+            "extension": "midata",
+            "open_kwargs": {"encoding": "utf-8-sig"}
+        },
+        HsbcCsvReader: {
             "dir": os.path.join(statements_dir, "hsbc"),
             "extension": "csv",
             "open_kwargs": {"encoding": "utf-8-sig"}
         },
         SantanderReader: {
             "dir": os.path.join(statements_dir, "santander"),
-            "extension": "txt",
+            "extension": "csv",
             "open_kwargs": {"encoding": "ISO-8859-10"}
         }
     }
@@ -370,7 +391,7 @@ if __name__ == "__main__":
         open_kwargs = config.get("open_kwargs", {})
         for filename in filelist:
             with open(filename, newline="", **open_kwargs) as f:
-                reader = reader_cls(f)
+                reader = reader_cls(filename, f)
                 statements += get_statements(reader)
 
     # Ensure all statements go up to the latest available date

@@ -2,7 +2,7 @@ from io import StringIO
 from datetime import datetime
 import operator
 
-from bank import (HSBCReader, NatwestReader, SantanderReader, Entry,
+from bank import (HsbcCsvReader, NatwestReader, MidataReader, Entry,
                   get_statements, AccountStatement, get_date_range, SortOrder,
                   aggregate, is_week_start)
 
@@ -23,7 +23,7 @@ class FakeReader(list):
 
 
 class TestReaders(object):
-    def test_hsbc(self):
+    def test_hsbc_csv_reader(self):
         lines = [
             '25/12/2017,My description here   VIS,"-50.65"',
             '20/12/2017,Other description   VIS,"25.00"',
@@ -36,16 +36,16 @@ class TestReaders(object):
 
         expected = [
             Entry(datetime(year=2017, month=10, day=20), -1234.50,
-                  "Other description   VIS", -1234.50, "HSBC account"),
+                  "Other description   VIS", -1234.50, "HSBC savings account"),
 
             Entry(datetime(year=2017, month=12, day=20), 25.00,
-                  "Other description   VIS", -1209.50, "HSBC account"),
+                  "Other description   VIS", -1209.50, "HSBC savings account"),
 
             Entry(datetime(year=2017, month=12, day=25), -50.65,
-                  "My description here   VIS", -1260.15, "HSBC account")
+                  "My description here   VIS", -1260.15, "HSBC savings account")
         ]
 
-        reader = HSBCReader(f)
+        reader = HsbcCsvReader("HSBC savings account", f)
         got = list(reader)
         assert got == expected
 
@@ -79,39 +79,35 @@ class TestReaders(object):
                   "My other account")
         ]
 
-        reader = NatwestReader(f)
+        reader = NatwestReader("blah", f)
         got = list(reader)
         assert got == expected
 
-    def test_santander(self):
-        f = StringIO()
+    def test_midata_reader(self):
         lines = [
-            "From: 10/08/2017 to 10/02/2018",
+            "Date|Type|Merchant/Description|Debit/Credit|Balance|",
+            "03/02/2018|CARD PAYMENT|CARD PAYMENT TO TESCO|-£3.01|£100.01|",
+            "01/01/2018|OTHER TYPE|MONIES|+£400.71|£103.02|",
             "",
-            "Account: 12345678",
-            "",
-            "Date: 10/02/2018",
-            "Description: Drink",
-            "Amount: -1.50 ",
-            "Balance: 101.55 ",
-            "",
-            "Date: 10/08/2017",
-            "Description: Food",
-            "Amount: -10.00 ",
-            "Balance: 100.05 "
+            "Arranged overdraft limit|03/02/2018|,+£0.00|"
         ]
+        f = StringIO()
         f.write("\n".join(lines))
         f.write("\n")
         f.seek(0)
 
         expected = [
-            Entry(datetime(year=2018, month=2, day=10), -1.5, "Drink", 101.55,
-                  "Santander account"),
-            Entry(datetime(year=2017, month=8, day=10), -10, "Food", 100.05,
-                  "Santander account")
+            Entry(datetime(year=2018, month=2, day=3), -3.01,
+                  "CARD PAYMENT TO TESCO", 100.01, "my account"),
+            Entry(datetime(year=2018, month=1, day=1), 400.71, "MONIES",
+                  103.02, "my account")
         ]
 
-        reader = SantanderReader(f)
+        class MidataTestReader(MidataReader):
+            delimiter = "|"
+            account_name = "my account"
+
+        reader = MidataTestReader("blah", f)
         got = list(reader)
         assert got == expected
 
