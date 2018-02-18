@@ -81,6 +81,45 @@ class SantanderReader(StatementReader):
         return float(num_str)
 
 
+class HSBCReader(StatementReader):
+    order = SortOrder.ascending
+
+    def __init__(self, f):
+        self.file = f
+        # HSBC statements unfortunately do not include balance, so make balance
+        # start at 0 on the start of first available day, and total amount as
+        # we go
+        self.balance = 0
+
+        # Need to calculate balance from first day but statement file is
+        # descending, so consume all lines now and reverse later
+        self.temp_entries = []
+        while True:
+            line = self.file.readline()
+            if not line:
+                break
+
+            line = line.strip()
+            date_str, description, amount_str = line.split(",", maxsplit=2)
+
+            date = datetime.strptime(date_str, "%d/%m/%Y")
+            amount = float(amount_str.replace('"', "").replace(",", ""))
+            # Balance needs to be calculated later after list has been
+            # reversed
+            self.temp_entries.append(Entry(date, amount, description, None,
+                                      "HSBC account"))
+
+    def __next__(self):
+        try:
+            e = self.temp_entries.pop(-1)
+        except IndexError:
+            raise StopIteration
+
+        self.balance += e.amount
+        return Entry(e.date, e.amount, e.description, self.balance,
+                e.account_name)
+
+
 class NatwestReader(StatementReader):
 
     # Entries are not strictly ascending in nw statements, but instead grouped
@@ -310,6 +349,11 @@ if __name__ == "__main__":
         NatwestReader: {
             "dir": os.path.join(statements_dir, "natwest"),
             "extension": "csv"
+        },
+        HSBCReader: {
+            "dir": os.path.join(statements_dir, "hsbc"),
+            "extension": "csv",
+            "open_kwargs": {"encoding": "utf-8-sig"}
         },
         SantanderReader: {
             "dir": os.path.join(statements_dir, "santander"),

@@ -2,9 +2,9 @@ from io import StringIO
 from datetime import datetime
 import operator
 
-from bank import (NatwestReader, SantanderReader, Entry, get_statements,
-                  AccountStatement, get_date_range, SortOrder, aggregate,
-                  is_week_start)
+from bank import (HSBCReader, NatwestReader, SantanderReader, Entry,
+                  get_statements, AccountStatement, get_date_range, SortOrder,
+                  aggregate, is_week_start)
 
 
 d1 = datetime(year=2018, month=2, day=1)
@@ -23,6 +23,32 @@ class FakeReader(list):
 
 
 class TestReaders(object):
+    def test_hsbc(self):
+        lines = [
+            '25/12/2017,My description here   VIS,"-50.65"',
+            '20/12/2017,Other description   VIS,"25.00"',
+            '20/10/2017,Other description   VIS,"-1,234.50"'
+        ]
+        f = StringIO()
+        f.write("\n".join(lines))
+        f.write("\n")
+        f.seek(0)
+
+        expected = [
+            Entry(datetime(year=2017, month=10, day=20), -1234.50,
+                  "Other description   VIS", -1234.50, "HSBC account"),
+
+            Entry(datetime(year=2017, month=12, day=20), 25.00,
+                  "Other description   VIS", -1209.50, "HSBC account"),
+
+            Entry(datetime(year=2017, month=12, day=25), -50.65,
+                  "My description here   VIS", -1260.15, "HSBC account")
+        ]
+
+        reader = HSBCReader(f)
+        got = list(reader)
+        assert got == expected
+
     def test_natwest(self):
         lines = [
             "Date, Type, Description, Value, Balance, Account Name, Account Number",

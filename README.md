@@ -3,8 +3,8 @@ bank-statements
 
 Usage: `python3 bank.py [-s]`.
 
-Script to parse bank statements downloaded from Natwest and Santander and print
-an aggregated statement in CSV format to standard output.
+Script to parse bank statements downloaded from Natwest, HSBC and Santander and
+print an aggregated statement in CSV format to standard output.
 
 Alternatively, use `-s` flag to group transactions by week and print a
 spending report.
@@ -16,8 +16,8 @@ DD-MM-YYYY,<balance>,<balance>,...,<balance>,<total balance>
 ...
 ```
 
-Statements are looked for at `statements/natwest/*.csv` and
-`statements/santander/*.txt`.
+Statements are looked for at `statements/natwest/*.csv`, `statements/hsbc/*.csv`
+and `statements/santander/*.txt`.
 
 Natwest statements should be downloaded by going to `Statements` ->
 `Download or export transactions`. For `Time period`, choose `Last 4 months`,
