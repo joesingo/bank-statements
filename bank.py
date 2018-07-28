@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import sys
 import operator
 from collections import namedtuple
@@ -5,6 +6,10 @@ import os
 import string
 from datetime import datetime, timedelta
 from enum import Enum
+
+
+if sys.version_info[0] < 3:
+    raise Exception("Please use Python 3")
 
 
 Entry = namedtuple("Entry", ["date", "amount", "description", "balance",
@@ -185,8 +190,8 @@ class NatwestReader(StatementReader):
 
             row = self.split_outside_quotes(line.strip(), ",")
             for i, _ in enumerate(row):
-                if row[i].startswith("'"):
-                    row[i] = row[i][1:]
+                 if row[i].startswith("'"):
+                     row[i] = row[i][1:]
 
             date_str = row[0]
             description = row[2]
